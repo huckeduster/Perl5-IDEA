@@ -70,6 +70,7 @@ public class PodLexer extends PodLexerGenerated {
     int state = getRealLexicalState();
 
     if (state == LEX_COMMAND_WAITING &&
+        result != POD_RAW_DATA &&
         result != TokenType.WHITE_SPACE &&
         result != POD_NEWLINE &&
         result != POD_CODE &&

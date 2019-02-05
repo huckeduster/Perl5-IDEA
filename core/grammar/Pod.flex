@@ -40,12 +40,18 @@ import com.perl5.lang.perl.lexer.PerlProtoLexer;
 	protected abstract IElementType parseCloseAngle();
 %}
 
-NEW_LINE = \r?\n
+NEW_LINE = \R
 WHITE_SPACE     = [ \t\f]
 HARD_NEW_LINE = {NEW_LINE}({WHITE_SPACE}*{NEW_LINE})+
 NONSPACE = [^ \t\f\r\n]
 EXAMPLE = {WHITE_SPACE}+{NONSPACE}+
 TAG_NAME = "=" [:jletterdigit:]+ 
+
+// http://perldoc.perl.org/perldata.html#Identifier-parsing
+PERL_XIDS = [\w && \p{XID_Start}_]
+PERL_XIDC = [\w && \p{XID_Continue}]
+
+IDENTIFIER = {PERL_XIDS} {PERL_XIDC}*
 
 NUMBER_EXP = [eE][+-]?[0-9_]+
 NUMBER_FLOAT = "." ([0-9][0-9_]*)?
@@ -57,7 +63,42 @@ NUMBER = {NUMBER_HEX} | {NUMBER_BIN}| {NUMBER_INT} | {NUMBER_SMALL}
 
 %state LEX_PREPARSED_ITEMS
 %state LEX_COMMAND_READY, LEX_COMMAND_WAITING
+
+%xstate LEX_FOR_DATA_FORMAT, LEX_FOR_DATA
+
+%xstate LEX_BEGIN_DATA_FORMAT, LEX_BEGIN_DATA, LEX_BEGIN_DATA_LINE
 %%
+
+<LEX_FOR_DATA_FORMAT>{
+  {WHITE_SPACE} {return TokenType.WHITE_SPACE;}
+  {IDENTIFIER}  {yybegin(LEX_FOR_DATA);return POD_FORMAT_NAME;}
+  [^]           {yypushback(1);yybegin(LEX_FOR_DATA);}
+}
+
+<LEX_FOR_DATA>{
+  .+            {}
+  {HARD_NEW_LINE} {pushback();yybegin(YYINITIAL);return POD_RAW_DATA;}
+  \R            {}
+  <<EOF>>       {return POD_RAW_DATA;}
+}
+
+<LEX_BEGIN_DATA_FORMAT>{
+  {WHITE_SPACE} {return TokenType.WHITE_SPACE;}
+  {IDENTIFIER}  {yybegin(LEX_BEGIN_DATA_LINE);return POD_FORMAT_NAME;}
+  [^]           {yypushback(1);yybegin(LEX_BEGIN_DATA_LINE);}
+}
+
+<LEX_BEGIN_DATA_LINE>{
+  // handles case =begin format=end
+  .*            {yybegin(LEX_BEGIN_DATA);}
+}
+
+<LEX_BEGIN_DATA>{
+  "=end" / .*    {yypushback(4);yybegin(LEX_COMMAND_WAITING);return POD_RAW_DATA;}
+  .+             {}
+  \R             {}
+  <<EOF>>        {return POD_RAW_DATA;}
+}
 
 <LEX_COMMAND_WAITING>{
 	"=pod"			{yybegin(YYINITIAL);return POD_POD;}
@@ -68,9 +109,11 @@ NUMBER = {NUMBER_HEX} | {NUMBER_BIN}| {NUMBER_INT} | {NUMBER_SMALL}
 	"=item"			{yybegin(YYINITIAL);return POD_ITEM;}
 	"=back"			{yybegin(YYINITIAL);return POD_BACK;}
 	"=over"			{yybegin(YYINITIAL);return POD_OVER;}
-	"=begin"		{yybegin(YYINITIAL);return POD_BEGIN;}
+	"=begin" / {WHITE_SPACE}*":"		{yybegin(YYINITIAL);return POD_BEGIN;}
+	"=begin"		{yybegin(LEX_BEGIN_DATA_FORMAT);return POD_BEGIN;}
 	"=end"			{yybegin(YYINITIAL);return POD_END;}
-	"=for"			{yybegin(YYINITIAL);return POD_FOR;}
+	"=for"	/ {WHITE_SPACE}*":"		{yybegin(YYINITIAL);return POD_FOR;}
+	"=for"	        	{yybegin(LEX_FOR_DATA_FORMAT);return POD_FOR;}
 	"=encoding"		{yybegin(YYINITIAL);return POD_ENCODING;}
 	"=cut"			{return parseCutToken();}
 	{TAG_NAME} 		{yybegin(YYINITIAL);return POD_UNKNOWN;}
